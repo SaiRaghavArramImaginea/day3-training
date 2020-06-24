@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+	<file:config name="File_Config" doc:name="File Config" doc:id="9c8fcdc0-a1e6-4845-9be5-e979dad11e82" >
+		<file:connection workingDir="/home/sairaghav/AnypointStudio/studio-workspace/day3-training" />
+	</file:config>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="acca677b-9df0-4187-bef8-1487747dd7a6" >
+		<db:my-sql-connection host="localhost" port="3306" user="root" password="pramati" database="day3" />
+	</db:config>
+	<file:config name="File_Config1" doc:name="File Config" doc:id="0cd21ad0-7280-44bc-849a-a24dc934f34c" >
+		<file:connection workingDir="/home/sairaghav/AnypointStudio/studio-workspace/mule/day3/output" />
+	</file:config>
+	<flow name="day3-trainingFlow" doc:id="9db102d3-0673-4af6-bace-5c3ec0e39061" >
+		<file:listener doc:name="On New or Updated File" doc:id="9020448f-d35f-45e8-8492-035e64b9439b" config-ref="File_Config" directory="/home/sairaghav/AnypointStudio/studio-workspace/mule/day3/input" outputMimeType="application/csv" moveToDirectory="/home/sairaghav/AnypointStudio/studio-workspace/mule/day3/archive" renameTo="#['SourceFile_' ++ (now() as String {format:'yyyy-MM-dd-hh-mm-ss.SSS'}) ++ '.json']" autoDelete="true">
+			<scheduling-strategy >
+				<fixed-frequency frequency="5000"/>
+			</scheduling-strategy>
+		</file:listener>
+		<ee:transform doc:name="Transform Message" doc:id="77456ad8-4c60-4fdb-b403-39159041970d" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload groupBy $.Semester pluck $]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="6f300344-5350-4088-8ab3-a61f705127ac" message="Transformed payload - #[payload]"/>
+		<batch:job jobName="day3-trainingBatch_Job" doc:id="32309953-c01f-4b68-a768-10ec2f0cd1ac" blockSize="4">
+			<batch:process-records >
+				<batch:step name="Batch_Step" doc:id="634b597d-cfe9-4bd4-8034-6653628ca5f3" acceptPolicy="ALL">
+					<logger level="INFO" doc:name="Logger" doc:id="e9c85336-53ea-4d05-80bc-71c8aa88fcf2" message="Batch Step Started -  #[payload]"/>
+					<ee:transform doc:name="Get student count per semester" doc:id="b3991641-ec26-4bdf-b2db-d11ba05f48d1">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+	SemesterID : payload[0].Semester,
+	count : sizeOf(payload),
+	AvgOfMarks : ((payload.SemesterMarks) reduce(marks, sum=0) -> sum + marks)/sizeOf(payload)
+}
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+					<set-variable value="#[payload]" doc:name="Set Variable" doc:id="d39df1dd-acf1-48ef-9a99-190189ee7d58" variableName="SemesterInfo"/>
+					<db:insert doc:name="Write each semester data" doc:id="d2ae7f39-428d-49d3-a586-12040676d532" config-ref="Database_Config">
+						<db:sql><![CDATA[INSERT INTO day3.StudentInfo
+           (`SemesterId`, `Count`)
+     VALUES(:semesterId,:count)]]></db:sql>
+						<db:input-parameters><![CDATA[#[{semesterId : payload.SemesterID, 
+count : payload.count}]]]></db:input-parameters>
+					</db:insert>
+					<set-payload value="#[vars.SemesterInfo]" doc:name="Set Payload" doc:id="f01da8ea-2d14-42c3-8e61-0d981df64d1b" />
+					<batch:aggregator doc:name="Batch of 2 semester Aggregator" doc:id="73954e89-d666-42de-be88-15c251c5545d" size="2">
+						<ee:transform doc:name="Transform Message" doc:id="6007d5e5-cf3f-4fb6-90a8-7694f9575896" >
+							<ee:message >
+								<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	Semesters : payload 
+	
+}]]></ee:set-payload>
+							</ee:message>
+						</ee:transform>
+						<logger level="INFO" doc:name="Logger" doc:id="31efe186-4094-41ff-b64c-b5db2df091f2" message="#[payload]"/>
+						<file:write doc:name="Write" doc:id="d0d46691-36ef-40b7-850f-b7b8541d6b5f" config-ref="File_Config1" path="#['BatchFile_' ++ (now() as String {format:'yyyy-MM-dd-hh-mm-ss.SSS'}) ++ '.json']"/>
+					</batch:aggregator>
+				</batch:step>
+				<batch:step name="Failedrecordsprocessing" doc:id="2abfdff6-7a21-4000-a94f-779d0fe27e09" acceptPolicy="ONLY_FAILURES">
+					<ee:transform doc:name="Transform Message" doc:id="25de98e9-6fcc-457b-861a-7e7912533747" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="0364580f-d301-418a-a5ad-187df24446e2" message="#[payload]"/>
+					<file:write doc:name="Failed Records" doc:id="a5b841fe-d454-40bb-acbe-1ae1249f0dfb" config-ref="File_Config1" path="#['ErrorFile_' ++ (now() as String {format:'yyyy-MM-dd-hh-mm-ss.SSS'}) ++ '.json']"/>
+				</batch:step>
+			</batch:process-records>
+			<batch:on-complete >
+				<logger level="INFO" doc:name="Logger" doc:id="706c70d3-732e-4579-aaa2-c4bcaedad18a" />
+				<db:insert doc:name="Insert" doc:id="6cc857c0-9684-49a8-9097-4ed0324963dd" config-ref="Database_Config">
+					<db:sql ><![CDATA[INSERT INTO day3.BatchProcessingResult
+           (`BatchId` ,`TotalRecords`,`FailedRecords`,`SuccesssfulRecords`)
+     VALUES
+           (:BatchId
+           ,:TotalRecords
+           ,:FailedRecords
+           ,:SuccesssfulRecords)]]></db:sql>
+					<db:input-parameters ><![CDATA[#[{BatchId : payload.batchJobInstanceId,
+TotalRecords :payload.totalRecords,  
+FailedRecords : payload.failedRecords,
+SuccesssfulRecords : payload.successfulRecords
+}]]]></db:input-parameters>
+				</db:insert>
+			</batch:on-complete>
+		</batch:job>
+	</flow>
+</mule>
